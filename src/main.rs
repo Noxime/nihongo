@@ -11,8 +11,10 @@ use sdl2::keyboard::Keycode;
 use std::env;
 use std::fs::File;
 use std::io::Read;
-
 use std::time::Instant;
+
+use std::num::Wrapping;
+
 use std::intrinsics::bswap;
 
 mod constants;
@@ -34,41 +36,19 @@ fn load_bin(filename: String) -> Vec<u8> {
     bin
 }
 
+#[inline(always)]
 fn read(mem: &Vec<u8>, address: i64) -> i64 {
-    use std::mem::transmute;
-    // let big = unsafe {
-    //     transmute::<[u8; 8], i64>(
-    //         mem[address as usize .. address as usize + 8]
-    //     )
-    // };
-    // let e = &mem[address as usize];
-    
     let base = (&mem[..]).as_ptr();
     let addr = unsafe { base.offset(address as isize) };
-    unsafe { bswap(unsafe { *(addr as *const i64) }) }
-
-    // println!("Base: {:?}", base);
-    // println!("Addr: {:?}", addr);
-    // println!("Valu: {:?}", val);
-
-    // let e = unsafe { (mem as *const _).offset(address as isize * 8) };
-    // let big = unsafe { *(e as *const i64) };
-
-    // println!("{:p}", mem);
-    // println!("{:?}", e);
-    // let big = unsafe {
-        // transmute::<[u8], i64>(
-            // mem[address as usize]
-        // )
-    // };
-    // unsafe { bswap(big) }
+    unsafe { bswap(*(addr as *const i64) ) }
 }
 
+#[inline(always)]
 fn write(mem: &mut Vec<u8>, s: i64, address: i64) {
-    use std::mem::transmute;
-    let s = unsafe { bswap(s) };
-    let big = unsafe { &mut transmute::<i64, [u8; 8]>(s) };
-    &mem[address as usize .. address as usize + 8].clone_from_slice(big);
+    use std::ptr::write;
+    let base = (&mut mem[..]).as_mut_ptr();
+    let addr = unsafe { base.offset(address as isize) };
+    unsafe { write(addr as *mut i64, bswap(s)) };
 }
 
 fn main() {
@@ -109,14 +89,10 @@ fn main() {
 
     // program loop
     'main: loop {
-        // program counter cannot be negative, if so we have to halt
-        if pc < 0 {
-            break;
-        }
-
         let a_addr = read(bin, pc + 0);
         let b_addr = read(bin, pc + 8);
-        let c_addr = read(bin, pc + 16);
+        //let c_addr = read(bin, pc + 16);
+        
         
         let a = read(bin, a_addr);
         let b = read(bin, b_addr);
@@ -126,10 +102,12 @@ fn main() {
         write(bin, s, b_addr);
 
         if s <= 0 {
-            pc = c_addr;
+            // pc = c_addr;
+            pc = read(bin, pc + 16);
         } else {
             pc += 24;
-        }
+        } 
+        
 
         // end of actual emulator
         
