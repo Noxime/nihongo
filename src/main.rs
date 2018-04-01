@@ -13,9 +13,7 @@ use std::fs::File;
 use std::io::Read;
 use std::time::Instant;
 
-use std::num::Wrapping;
-
-use std::intrinsics::bswap;
+use std::intrinsics::{bswap, likely, unlikely};
 
 mod constants;
 mod display;
@@ -39,7 +37,7 @@ fn load_bin(filename: String) -> Vec<u8> {
 #[inline(always)]
 fn read(mem: &Vec<u8>, address: i64) -> i64 {
     let base = (&mem[..]).as_ptr();
-    let addr = unsafe { base.offset(address as isize) };
+    let addr = unsafe { base.offset(address as isize) as *const i64 };
     unsafe { bswap(*(addr as *const i64) ) }
 }
 
@@ -60,7 +58,7 @@ fn main() {
 
     println!("Binary file loaded ({} bytes)", bin.len());
 
-    // defaults
+    // default video
     let width = 1024;
     let height = 512;
 
@@ -83,17 +81,21 @@ fn main() {
     // vm variables
     let mut pc = 0i64;
     let mut iter = 0usize;
+    let mut test = 0usize;
     let mut last_frame = 0i64;
     let start = Instant::now();
     println!("VM state initialized, launching");
 
     // program loop
     'main: loop {
+        
         let a_addr = read(bin, pc + 0);
         let b_addr = read(bin, pc + 8);
-        //let c_addr = read(bin, pc + 16);
-        
-        
+        //let a_addr = 0;
+        //let b_addr = 0;
+        let pc_restore = pc;
+        pc = read(bin, pc + 16);
+
         let a = read(bin, a_addr);
         let b = read(bin, b_addr);
 
@@ -101,23 +103,20 @@ fn main() {
 
         write(bin, s, b_addr);
 
-        if s <= 0 {
-            // pc = c_addr;
-            pc = read(bin, pc + 16);
-        } else {
-            pc += 24;
-        } 
-        
+        // wait.. we didn't jump! go back to where we came from and go 24
+        if unsafe { unlikely(s > 0) } {
+            pc = pc_restore + 24;
+        }
 
         // end of actual emulator
         
         iter += 1;
-        if iter % 4_000_000 == 0 {
+        
+        if unsafe { unlikely(iter % 4_000_000 == 0) } {
             let time = {
                 let e = start.elapsed();
                 e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
             };
-
 
             let (w, h, d) = display::draw_screen(
                 bin, 
@@ -129,9 +128,10 @@ fn main() {
             io::write_mouse(bin, pump.mouse_state(), w, h);
 
             let _  = canvas.window_mut()
-                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} mhz", 
+                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS Test ratio: {:.3}", 
                 w, h, d, 
-                iter as f64 / time / 1_000_000.0
+                iter as f64 / time / 1_000_000.0,
+                test as f64 / iter as f64
             ));
 
             for event in pump.poll_iter() {
@@ -149,6 +149,18 @@ fn main() {
                 e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
             };
         }
+
+        if iter > 5_000_000_000 {
+            break 'main;
+        }
     }
+
+    let finish = {
+        let e = start.elapsed();
+        e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
+    };
+
     println!("Halted, PC: {:#X}", pc);
+    println!("Runtime: {:.2}s, instructions: {} million", finish, iter / 1_000_000);
+    println!("Average MIPS: {:.2}", iter as f64 / finish / 1_000_000.0)
 }
