@@ -3,5 +3,5 @@ name = "nihongo"
 version = "0.0.0"
 
 [dependencies]
-byteorder = "1.2.1"
 sdl2 = "0.31.0"
+cpuprofiler = "0.0.3"

@@ -20,3 +20,10 @@ pub const IO_MOUSE: i64 = 0x13FFF7A0; // mouse data beginning
 // 8 bytes absolute y from top left to bottom right (max is 2^32)
 // 8 bytes power of touch, 2^32 is 1kg
 // 8 bytes scroll wheel, -1 is up and 1 is down
+
+pub const CPU_0_FLAGS: i64 = 0x13EE0000;
+pub const CPU_0_PC: i64 = CPU_0_FLAGS + 8;
+// 8 bytes cpu state, 0 no cpu, 1 running 2 stop requested 4 stopped
+// 8 bytes program counter
+pub const CPU_1_FLAGS: i64 = CPU_0_PC + 8;
+pub const CPU_1_PC: i64 = CPU_1_FLAGS + 8;

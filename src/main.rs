@@ -1,12 +1,13 @@
 #![feature(core_intrinsics)]
 
-extern crate byteorder;
 extern crate sdl2;
+extern crate cpuprofiler;
 
-use byteorder::{BigEndian, ByteOrder};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+
+use cpuprofiler::PROFILER;
 
 use std::env;
 use std::fs::File;
@@ -34,6 +35,21 @@ fn load_bin(filename: String) -> Vec<u8> {
     bin
 }
 
+/*
+#[inline(always)]
+fn read_ptr(base: *const u8, address: i64) -> i64 {
+    let addr = unsafe { base.offset(address as isize) as *const i64 };
+    unsafe { bswap(*(addr as *const i64) ) }
+}
+
+#[inline(always)]
+fn write_ptr(base: *mut u8, s: i64, address: i64) {
+    use std::ptr::write;
+    let addr = unsafe { base.offset(address as isize) };
+    unsafe { write(addr as *mut i64, bswap(s)) };
+}
+*/
+
 #[inline(always)]
 fn read(mem: &Vec<u8>, address: i64) -> i64 {
     let base = (&mem[..]).as_ptr();
@@ -54,10 +70,12 @@ fn main() {
 
     let filename = env::args().skip(1).next().unwrap_or("disk0.bin".to_string());
     println!("Loading file: {}", &filename);
+
     let bin = &mut load_bin(filename);
 
     println!("Binary file loaded ({} bytes)", bin.len());
 
+    
     // default video
     let width = 1024;
     let height = 512;
@@ -77,40 +95,148 @@ fn main() {
     canvas.clear();
     canvas.present();
     let mut pump = context.event_pump().unwrap();
+    
 
     // vm variables
-    let mut pc = 0i64;
+    let mut pc1 = 0i64;
+    let mut pc2 = 0i64;
+
     let mut iter = 0usize;
+    let mut ins = 0usize;
     let mut test = 0usize;
     let mut last_frame = 0i64;
-    let start = Instant::now();
+
+    // initialize second core
+    let mut state2 = 4;
+
+    write(bin, state2, CPU_1_FLAGS); // state is stopped
+    write(bin, pc2, CPU_1_PC); // start 0
+
     println!("VM state initialized, launching");
+    
+    //PROFILER.lock().unwrap().start("./nihongo.profile").expect("Profile failed");
+    let start = Instant::now();
+    
+    /*
+    let mem = (&bin[..]).as_ptr();
+    let mem_mut = (&mut bin[..]).as_mut_ptr();
+    */
 
     // program loop
     'main: loop {
         
-        let a_addr = read(bin, pc + 0);
-        let b_addr = read(bin, pc + 8);
-        //let a_addr = 0;
-        //let b_addr = 0;
-        let pc_restore = pc;
-        pc = read(bin, pc + 16);
+        { // CPU_0
+            let mut pc = pc1;
 
-        let a = read(bin, a_addr);
-        let b = read(bin, b_addr);
+            let pc_restore = pc;
+            let a_addr = read(bin, pc +  0);
+            let b_addr = read(bin, pc +  8);
+            pc         = read(bin, pc + 16);
 
-        let s = b - a;
+            let a = read(bin, a_addr);
+            let b = read(bin, b_addr);
 
-        write(bin, s, b_addr);
+            let s = b - a;
+            write(bin, s, b_addr);        
 
-        // wait.. we didn't jump! go back to where we came from and go 24
-        if unsafe { unlikely(s > 0) } {
-            pc = pc_restore + 24;
+            // wait.. we didn't jump! go back to where we came from and go 24
+            if unsafe { unlikely(s > 0) } {
+                pc = pc_restore + 24;
+            }
+            write(bin, pc, CPU_0_PC);
+            pc1 = pc;
+
+            ins += 1;
         }
+
+        let cpu_1_state = read(bin, CPU_1_FLAGS);
+        if cpu_1_state == 1 { // CPU_1
+            let mut pc = pc2;
+            let lpc = read(bin, CPU_1_PC);
+            if pc != lpc {
+                println!("CPU_1 PC was off sync! PC: {:#X}, Mem: {:#X}", pc, lpc);
+                pc = lpc;
+            }
+
+            let pc_restore = pc2;
+            let a_addr = read(bin, pc +  0);
+            let b_addr = read(bin, pc +  8);
+            pc         = read(bin, pc + 16);
+
+            let a = read(bin, a_addr);
+            let b = read(bin, b_addr);
+
+            let s = b - a;
+            write(bin, s, b_addr);        
+
+            // wait.. we didn't jump! go back to where we came from and go 24
+            if unsafe { unlikely(s > 0) } {
+                pc = pc_restore + 24;
+            }
+
+            write(bin, pc, CPU_1_PC);
+            pc2 = pc;
+
+            ins += 1;
+        } else if cpu_1_state == 2 {
+            println!("CPU_1 disabled");
+            write(bin, 4, CPU_1_FLAGS);
+        }
+
+
+        //write(bin, pc, CPU_0_PC);
+
+        /*
+        // multicore
+        state2 = read(bin, CPU_1_FLAGS);
+        pc2 = read(bin, CPU_1_PC);
+
+        let state1 = read(bin, CPU_0_FLAGS);
+        if state1 >= 2 {  
+            println!("CPU_0 stopped?!");
+        }
+
+        // stop requested, stopped
+        if state2 == 2 {
+            state2 = 4;
+            write(bin, state2, CPU_1_FLAGS);
+            println!("CPU_1 stop requested");
+        }
+
+        ins += 1;
+
+        // cpu_1 running
+        if state2 == 1 {
+            test += 1;
+            let pc_restore = pc2;
+            let a_addr = read(bin, pc2 +  0);
+            let b_addr = read(bin, pc2 +  8);
+            pc2        = read(bin, pc2 + 16);
+
+            let a = read(bin, a_addr);
+            let b = read(bin, b_addr);
+
+            let s = b - a;
+            write(bin, s, b_addr);
+
+            
+            state2 = read(bin, CPU_1_FLAGS);
+            pc2 = read(bin, CPU_1_PC);
+
+            // wait.. we didn't jump! go back to where we came from and go 24
+            if unsafe { unlikely(s > 0) } {
+                pc2 = pc_restore + 24;
+            }
+
+            ins += 1;
+        }
+        write(bin, pc2, CPU_1_PC);
+        */
 
         // end of actual emulator
         
         iter += 1;
+
         
         if unsafe { unlikely(iter % 4_000_000 == 0) } {
             let time = {
@@ -128,10 +254,10 @@ fn main() {
             io::write_mouse(bin, pump.mouse_state(), w, h);
 
             let _  = canvas.window_mut()
-                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS Test ratio: {:.3}", 
+                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS, Ins/Clc: {:.3}", 
                 w, h, d, 
-                iter as f64 / time / 1_000_000.0,
-                test as f64 / iter as f64
+                ins as f64 / time / 1_000_000.0,
+                ins as f64 / iter as f64
             ));
 
             for event in pump.poll_iter() {
@@ -149,10 +275,8 @@ fn main() {
                 e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
             };
         }
+        
 
-        if iter > 5_000_000_000 {
-            break 'main;
-        }
     }
 
     let finish = {
@@ -160,7 +284,11 @@ fn main() {
         e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
     };
 
-    println!("Halted, PC: {:#X}", pc);
-    println!("Runtime: {:.2}s, instructions: {} million", finish, iter / 1_000_000);
-    println!("Average MIPS: {:.2}", iter as f64 / finish / 1_000_000.0)
+    //PROFILER.lock().unwrap().stop().expect("Can't stop profiler");
+
+    println!("Halted CPU_0, PC: {:#X}", pc1);
+    println!("Halted CPU_1, PC: {:#X}", pc2);
+    println!("Runtime: {:.2}s, instructions: {} million, cycles {} million", finish, ins / 1_000_000, iter / 1_000_000);
+    println!("Average clcs: {:.2}", iter as f64 / finish / 1_000_000.0);
+    println!("Average MIPS: {:.2}", ins as f64 / finish / 1_000_000.0);
 }
