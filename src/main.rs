@@ -1,13 +1,14 @@
 #![feature(core_intrinsics)]
 
+#[cfg(feature = "sdl")]
 extern crate sdl2;
-extern crate cpuprofiler;
 
+#[cfg(feature = "sdl")]
 use sdl2::pixels::PixelFormatEnum;
+#[cfg(feature = "sdl")]
 use sdl2::event::Event;
+#[cfg(feature = "sdl")]
 use sdl2::keyboard::Keycode;
-
-use cpuprofiler::PROFILER;
 
 use std::env;
 use std::fs::File;
@@ -17,7 +18,9 @@ use std::time::Instant;
 use std::intrinsics::{bswap, likely, unlikely};
 
 mod constants;
+#[cfg(feature = "sdl")]
 mod display;
+#[cfg(feature = "sdl")]
 mod io;
 
 use constants::*;
@@ -80,21 +83,22 @@ fn main() {
     let width = 1024;
     let height = 512;
 
-    let context = sdl2::init().unwrap();
-    let video = context.video().unwrap();
-    let window = video.window("Nihongo", width, height)
+    
+    #[cfg(feature = "sdl")] let context = sdl2::init().unwrap();
+    #[cfg(feature = "sdl")] let video = context.video().unwrap();
+    #[cfg(feature = "sdl")] let window = video.window("Nihongo", width, height)
         .position_centered()
         .build().unwrap();
-    let mut canvas = window.into_canvas().build().unwrap();
-    let tex_creator = canvas.texture_creator();
-    let mut tex = tex_creator.create_texture_streaming(
+    #[cfg(feature = "sdl")] let mut canvas = window.into_canvas().build().unwrap();
+    #[cfg(feature = "sdl")] let tex_creator = canvas.texture_creator();
+    #[cfg(feature = "sdl")] let mut tex = tex_creator.create_texture_streaming(
         Some(PixelFormatEnum::RGB24), // pixel format
         width, // dimens
         height
     ).unwrap();
-    canvas.clear();
-    canvas.present();
-    let mut pump = context.event_pump().unwrap();
+    #[cfg(feature = "sdl")] canvas.clear();
+    #[cfg(feature = "sdl")] canvas.present();
+    #[cfg(feature = "sdl")] let mut pump = context.event_pump().unwrap();
     
 
     // vm variables
@@ -178,67 +182,35 @@ fn main() {
             pc2 = pc;
 
             ins += 1;
-        } else if cpu_1_state == 2 {
+        } else if unsafe { unlikely(cpu_1_state == 2) } {
             println!("CPU_1 disabled");
             write(bin, 4, CPU_1_FLAGS);
         }
-
-
-        //write(bin, pc, CPU_0_PC);
-
-        /*
-        // multicore
-        state2 = read(bin, CPU_1_FLAGS);
-        pc2 = read(bin, CPU_1_PC);
-
-        let state1 = read(bin, CPU_0_FLAGS);
-        if state1 >= 2 {  
-            println!("CPU_0 stopped?!");
-        }
-
-        // stop requested, stopped
-        if state2 == 2 {
-            state2 = 4;
-            write(bin, state2, CPU_1_FLAGS);
-            println!("CPU_1 stop requested");
-        }
-
-        ins += 1;
-
-        // cpu_1 running
-        if state2 == 1 {
-            test += 1;
-            let pc_restore = pc2;
-            let a_addr = read(bin, pc2 +  0);
-            let b_addr = read(bin, pc2 +  8);
-            pc2        = read(bin, pc2 + 16);
-
-            let a = read(bin, a_addr);
-            let b = read(bin, b_addr);
-
-            let s = b - a;
-            write(bin, s, b_addr);
-
-            
-            state2 = read(bin, CPU_1_FLAGS);
-            pc2 = read(bin, CPU_1_PC);
-
-            // wait.. we didn't jump! go back to where we came from and go 24
-            if unsafe { unlikely(s > 0) } {
-                pc2 = pc_restore + 24;
-            }
-
-            ins += 1;
-        }
-        write(bin, pc2, CPU_1_PC);
-        */
 
         // end of actual emulator
         
         iter += 1;
 
-        
-        if unsafe { unlikely(iter % 4_000_000 == 0) } {
+        if unsafe { unlikely(iter == 2_000_000_000) } {
+            break 'main;
+        }
+
+        #[cfg(not(feature = "sdl"))] {
+            if unsafe { unlikely(iter % 32_000_000 == 0) } {
+                let time = {
+                    let e = start.elapsed();
+                    e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
+                };
+                println!("{:.2} MIPS, {:.2} CLCS",
+                ins as f64 / time / 1_000_000.0,
+                iter as f64 / time / 1_000_000.0
+                );
+            }
+        }
+
+        #[cfg(feature = "sdl")]
+        {
+        if unsafe { unlikely(iter % 4_000_000_000 == 0) } {
             let time = {
                 let e = start.elapsed();
                 e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
@@ -274,6 +246,7 @@ fn main() {
                 let e = start.elapsed();
                 e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
             };
+        }
         }
         
 

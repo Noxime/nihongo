@@ -3,5 +3,8 @@ name = "nihongo"
 version = "0.0.0"
 
 [dependencies]
-sdl2 = "0.31.0"
-cpuprofiler = "0.0.3"
+# sdl2 = "0.31.0"
+
+[features]
+default = []
+sdl = []
