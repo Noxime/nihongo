@@ -3,6 +3,9 @@
 
 #[cfg(feature = "sdl")]
 extern crate sdl2;
+#[cfg(feature = "detect_cpu")]
+extern crate raw_cpuid;
+
 
 #[cfg(feature = "sdl")]
 use sdl2::pixels::PixelFormatEnum;
@@ -122,12 +125,36 @@ fn main() {
 
     write(bin, CPU_RUNNING, CPU_0_FLAGS); // Cpu 0 starts off running
     write(bin, CPU_STOPPED, CPU_1_FLAGS); // State is stopped
-    write(bin, CPU_NOT_PRESENT, CPU_2_FLAGS); // State is stopped
-    write(bin, CPU_NOT_PRESENT, CPU_3_FLAGS); // State is stopped
+    write(bin, CPU_STOPPED, CPU_2_FLAGS); // State is stopped
+    write(bin, CPU_STOPPED, CPU_3_FLAGS); // State is stopped
     write(bin, 0, CPU_0_PC); // start 0
     write(bin, 0, CPU_1_PC); // start 1
     write(bin, 0, CPU_2_PC); // start 2
     write(bin, 0, CPU_3_PC); // start 3
+
+    // write cpu metadata
+    write(bin, 1, CPU_SPINUP_CYCLES); // since we are single threaded, our core spinup is instant
+
+    {
+        let mut cpu = CPU_STR.to_string();
+        #[cfg(feature = "detect_cpu")]
+        {
+            let id = raw_cpuid::CpuId::new();
+            let v = format!("{}", id.get_vendor_info()
+                .map(|v| format!("{}", v))
+                .unwrap_or("[UNKNOWN]".to_string()));
+            let m = format!("{}", id.get_feature_info()
+                .map(|v| format!("{}-{}", v.family_id(), v.model_id()))
+                .unwrap_or("[UNKNOWN]".to_string()));
+
+            cpu = format!("N-VM {} {}", v, m);
+            println!("Detected CPU: {}", cpu);
+        }
+        for (i, b) in cpu.bytes().enumerate() {
+            bin[CPU_VENDOR_INFO as usize + i] = b;
+        }
+    }
+    
 
     println!("VM state initialized");
     
@@ -157,8 +184,8 @@ fn main() {
         
         match read(bin, CPU_0_FLAGS) { // CPU_0
             //CPU_NOT_PRESENT => { write(bin, CPU_RUNNING, CPU_0_FLAGS); }, // Ideally this shouldn't happen, but Dawn is buggy?
-            CPU_STOP_REQUESTED | // Should we worry about core 0?
-            CPU_STOPPED => { write(bin, CPU_RUNNING, CPU_0_FLAGS); },
+            //CPU_STOP_REQUESTED | // Should we worry about core 0?
+            //CPU_STOPPED => { write(bin, CPU_RUNNING, CPU_0_FLAGS); },
             CPU_SHUTDOWN => { println!("Graceful shutdown"); break 'main; },
             CPU_RESET => { println!("Performing hard reset, 0x10 written to CPU_0 flags"); unimplemented!() },
             //CPU_RUNNING | 
@@ -175,9 +202,6 @@ fn main() {
 
                 let s = b - a;
                 write(bin, s, b_addr);
-                if b_addr == CPU_1_PC {
-                    println!("CPU_0 wrote to CPU_1 flags??");
-                }
 
                 // wait.. we didn't jump! go back to where we came from and go 24
                 if unsafe { unlikely(s > 0) } {
@@ -196,7 +220,7 @@ fn main() {
             CPU_SHUTDOWN => { println!("CPU_1 is not allowed to shutdown the system; Ignored"); },
             CPU_RESET => { println!("CPU_1 is not allowed to reset the system; Ignored"); },
             //CPU_RUNNING | 
-            flags => {
+            CPU_RUNNING => {
                 let mut pc = read(bin, CPU_1_PC);
 
                 let pc_restore = pc;
@@ -214,11 +238,77 @@ fn main() {
                 if unsafe { unlikely(s > 0) } {
                     pc = pc_restore + 24;
                 }
+                write(bin, pc, CPU_1_PC);
 
                 ins += 1;
-            }
+            },
+            _ => {}
         }
-        
+
+        match read(bin, CPU_2_FLAGS) { // CPU_1
+            CPU_NOT_PRESENT | // This is disabled, don't run
+            CPU_STOPPED => {}, // CPU is asleep, NOP
+            CPU_STOP_REQUESTED => { write(bin, CPU_STOPPED, CPU_2_FLAGS); },
+            CPU_SHUTDOWN => { println!("CPU_2 is not allowed to shutdown the system; Ignored"); },
+            CPU_RESET => { println!("CPU_2 is not allowed to reset the system; Ignored"); },
+            //CPU_RUNNING | 
+            CPU_RUNNING => {
+                let mut pc = read(bin, CPU_2_PC);
+
+                let pc_restore = pc;
+                let a_addr = read(bin, pc +  0);
+                let b_addr = read(bin, pc +  8);
+                pc         = read(bin, pc + 16);
+
+                let a = read(bin, a_addr);
+                let b = read(bin, b_addr);
+
+                let s = b - a;
+                write(bin, s, b_addr);
+
+                // wait.. we didn't jump! go back to where we came from and go 24
+                if unsafe { unlikely(s > 0) } {
+                    pc = pc_restore + 24;
+                }
+                write(bin, pc, CPU_2_PC);
+
+                ins += 1;
+            },
+            _ => {}
+        }
+
+        match read(bin, CPU_3_FLAGS) { // CPU_1
+            CPU_NOT_PRESENT | // This is disabled, don't run
+            CPU_STOPPED => {}, // CPU is asleep, NOP
+            CPU_STOP_REQUESTED => { write(bin, CPU_STOPPED, CPU_3_FLAGS); },
+            CPU_SHUTDOWN => { println!("CPU_3 is not allowed to shutdown the system; Ignored"); },
+            CPU_RESET => { println!("CPU_3 is not allowed to reset the system; Ignored"); },
+            //CPU_RUNNING | 
+            CPU_RUNNING => {
+                let mut pc = read(bin, CPU_3_PC);
+
+                let pc_restore = pc;
+                let a_addr = read(bin, pc +  0);
+                let b_addr = read(bin, pc +  8);
+                pc         = read(bin, pc + 16);
+
+                let a = read(bin, a_addr);
+                let b = read(bin, b_addr);
+
+                let s = b - a;
+                write(bin, s, b_addr);
+
+                // wait.. we didn't jump! go back to where we came from and go 24
+                if unsafe { unlikely(s > 0) } {
+                    pc = pc_restore + 24;
+                }
+                write(bin, pc, CPU_3_PC);
+
+                ins += 1;
+            },
+            _ => {}
+        }
+
         // write(bin, pc0, CPU_0_PC);
         // write(bin, pc1, CPU_1_PC);
         
@@ -271,10 +361,6 @@ fn main() {
         // end of actual emulator
         
         iter += 1;
-
-        if unsafe { unlikely(iter == 8_000_000_000) } {
-            break 'main;
-        }
 
         #[cfg(not(feature = "sdl"))] {
             if unsafe { unlikely(iter % 32_000_000 == 0) } {
@@ -339,7 +425,7 @@ fn main() {
     };
 
     //PROFILER.lock().unwrap().stop().expect("Can't stop profiler");
-
+    println!();
     println!("Halted CPU_0, PC: {:#X}", read(bin, CPU_0_PC));
     println!("Halted CPU_1, PC: {:#X}", read(bin, CPU_1_PC));
     println!("Halted CPU_2, PC: {:#X}", read(bin, CPU_2_PC));

@@ -9,6 +9,11 @@ argparse = "0.2.1"
 optional = true
 version = "0.31.0"
 
+[dependencies.raw-cpuid]
+optional = true
+version = "3.0.0"
+
 [features]
-default = []
+default = ["sdl", "detect_cpu"]
 sdl = ["sdl2"]
+detect_cpu = ["raw-cpuid"]
