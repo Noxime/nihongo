@@ -19,6 +19,9 @@ use std::fs::File;
 use std::io::Read;
 use std::time::Instant;
 
+use std::thread;
+use std::sync::{Mutex, Arc};
+
 use std::intrinsics::{bswap, likely, unlikely};
 
 mod constants;
@@ -42,41 +45,24 @@ fn load_bin(filename: String) -> Vec<u8> {
     bin
 }
 
-/*
 #[inline(always)]
 fn read_ptr(base: *const u8, address: i64) -> i64 {
     let addr = unsafe { base.offset(address as isize) as *const i64 };
     unsafe { bswap(*(addr as *const i64) ) }
 }
-
 #[inline(always)]
 fn write_ptr(base: *mut u8, s: i64, address: i64) {
     use std::ptr::write;
+    //let base = (&mut mem[..]).as_mut_ptr();
     let addr = unsafe { base.offset(address as isize) };
     unsafe { write(addr as *mut i64, bswap(s)) };
 }
-*/
 
 #[inline(always)]
 fn read(mem: &Vec<u8>, address: i64) -> i64 {
-    
     let base = (&mem[..]).as_ptr();
     let addr = unsafe { base.offset(address as isize) as *const i64 };
     unsafe { bswap(*(addr as *const i64) ) }
-    /*
-    use std::mem::transmute;
-    let x: [u8; 8] = [
-        mem[address as usize + 0],
-        mem[address as usize + 1],
-        mem[address as usize + 2],
-        mem[address as usize + 3],
-        mem[address as usize + 4],
-        mem[address as usize + 5],
-        mem[address as usize + 6],
-        mem[address as usize + 7],
-    ];
-    unsafe { bswap(transmute(x)) }
-    */
 }
 
 #[inline(always)]
@@ -93,6 +79,8 @@ fn main() {
     let filename = env::args().skip(1).next().unwrap_or("disk0.bin".to_string());
     println!("Loading file: {}", &filename);
 
+    //let raw_bin = &mut load_bin(filename);
+    //let bin = Arc::new(raw_bin);
     let bin = &mut load_bin(filename);
 
     println!("Binary file loaded ({} bytes)", bin.len());
@@ -119,7 +107,6 @@ fn main() {
     #[cfg(feature = "sdl")] let mut pump = context.event_pump().unwrap();
 
     let mut iter = 0usize;
-    let mut ins = 0usize;
     let mut test = 0usize;
     let mut last_frame = 0i64;
 
@@ -161,205 +148,130 @@ fn main() {
     //PROFILER.lock().unwrap().start("./nihongo.profile").expect("Profile failed");
     let start = Instant::now();
 
-    // program loop
-    'main: loop {
+    use std::mem::transmute;
+    let mem_ptr: u64 = unsafe { transmute((&bin[..]).as_ptr()) };
 
-        //let mut ran_0 = false;
-        /*
-        let a_addr = read(bin, pc0 + 0);
-        let b_addr = read(bin, pc0 + 8);
-        let c_addr = read(bin, pc0 + 16);
-        let a = read(bin, a_addr);
-        let b = read(bin, b_addr);
-        let s = b - a;
-        write(bin, s, b_addr);
-        if s <= 0 {
-            pc0 = c_addr;
-        } else {
-            pc0 += 24;
-        }
-        ins += 1;
-        */
-
-        
-        match read(bin, CPU_0_FLAGS) { // CPU_0
-            //CPU_NOT_PRESENT => { write(bin, CPU_RUNNING, CPU_0_FLAGS); }, // Ideally this shouldn't happen, but Dawn is buggy?
-            //CPU_STOP_REQUESTED | // Should we worry about core 0?
-            //CPU_STOPPED => { write(bin, CPU_RUNNING, CPU_0_FLAGS); },
-            CPU_SHUTDOWN => { println!("Graceful shutdown"); break 'main; },
-            CPU_RESET => { println!("Performing hard reset, 0x10 written to CPU_0 flags"); unimplemented!() },
-            //CPU_RUNNING | 
-            flags => {
-                let mut pc = read(bin, CPU_0_PC);
-
-                let pc_restore = pc;
-                let a_addr = read(bin, pc +  0);
-                let b_addr = read(bin, pc +  8);
-                pc         = read(bin, pc + 16);
-
-                let a = read(bin, a_addr);
-                let b = read(bin, b_addr);
-
-                let s = b - a;
-                write(bin, s, b_addr);
-
-                // wait.. we didn't jump! go back to where we came from and go 24
-                if unsafe { unlikely(s > 0) } {
-                    pc = pc_restore + 24;
-                }
-                write(bin, pc, CPU_0_PC);
-
-                ins += 1;
+    let t1 = thread::spawn(move || {
+        let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        let mut ins = 0usize;
+        loop {
+            match read_ptr(mem, CPU_0_FLAGS) { // CPU_1
+                //CPU_NOT_PRESENT | // This is disabled, don't run
+                //CPU_STOPPED => {}, // CPU is asleep, NOP
+                //CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_0_FLAGS); },
+                CPU_SHUTDOWN => { println!("CPU_0 requested shutdown"); unimplemented!() },
+                CPU_RESET => { println!("CPU_0 requested hard reset"); unimplemented!() },
+                //CPU_RUNNING | 
+                CPU_RUNNING => {
+                    let mut pc = read_ptr(mem, CPU_3_PC);
+                    let pc_restore = pc;
+                    let a_addr = read_ptr(mem, pc +  0);
+                    let b_addr = read_ptr(mem, pc +  8);
+                    pc         = read_ptr(mem, pc + 16);
+                    let a = read_ptr(mem, a_addr);
+                    let b = read_ptr(mem, b_addr);
+                    let s = b - a;
+                    write_ptr(mem, s, b_addr);
+                    if unsafe { unlikely(s > 0) } {
+                        pc = pc_restore + 24;
+                    }
+                    write_ptr(mem, pc, CPU_3_PC);
+                    ins += 1;
+                },
+                _ => {}
             }
         }
-        
-        match read(bin, CPU_1_FLAGS) { // CPU_1
-            CPU_NOT_PRESENT | // This is disabled, don't run
-            CPU_STOPPED => {}, // CPU is asleep, NOP
-            CPU_STOP_REQUESTED => { write(bin, CPU_STOPPED, CPU_1_FLAGS); },
-            CPU_SHUTDOWN => { println!("CPU_1 is not allowed to shutdown the system; Ignored"); },
-            CPU_RESET => { println!("CPU_1 is not allowed to reset the system; Ignored"); },
-            //CPU_RUNNING | 
-            CPU_RUNNING => {
-                let mut pc = read(bin, CPU_1_PC);
-
-                let pc_restore = pc;
-                let a_addr = read(bin, pc +  0);
-                let b_addr = read(bin, pc +  8);
-                pc         = read(bin, pc + 16);
-
-                let a = read(bin, a_addr);
-                let b = read(bin, b_addr);
-
-                let s = b - a;
-                write(bin, s, b_addr);
-
-                // wait.. we didn't jump! go back to where we came from and go 24
-                if unsafe { unlikely(s > 0) } {
-                    pc = pc_restore + 24;
-                }
-                write(bin, pc, CPU_1_PC);
-
-                ins += 1;
-            },
-            _ => {}
+    });
+    thread::spawn(move || {
+        let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        loop {
+            match read_ptr(mem, CPU_1_FLAGS) { // CPU_1
+                CPU_NOT_PRESENT | // This is disabled, don't run
+                CPU_STOPPED => {}, // CPU is asleep, NOP
+                CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_1_FLAGS); },
+                CPU_SHUTDOWN => { println!("CPU_1 is not allowed to shutdown the system; Ignored"); },
+                CPU_RESET => { println!("CPU_1 is not allowed to reset the system; Ignored"); },
+                //CPU_RUNNING | 
+                CPU_RUNNING => {
+                    let mut pc = read_ptr(mem, CPU_1_PC);
+                    let pc_restore = pc;
+                    let a_addr = read_ptr(mem, pc +  0);
+                    let b_addr = read_ptr(mem, pc +  8);
+                    pc         = read_ptr(mem, pc + 16);
+                    let a = read_ptr(mem, a_addr);
+                    let b = read_ptr(mem, b_addr);
+                    let s = b - a;
+                    write_ptr(mem, s, b_addr);
+                    if unsafe { unlikely(s > 0) } {
+                        pc = pc_restore + 24;
+                    }
+                    write_ptr(mem, pc, CPU_1_PC);
+                },
+                _ => {}
+            }
         }
-
-        match read(bin, CPU_2_FLAGS) { // CPU_1
-            CPU_NOT_PRESENT | // This is disabled, don't run
-            CPU_STOPPED => {}, // CPU is asleep, NOP
-            CPU_STOP_REQUESTED => { write(bin, CPU_STOPPED, CPU_2_FLAGS); },
-            CPU_SHUTDOWN => { println!("CPU_2 is not allowed to shutdown the system; Ignored"); },
-            CPU_RESET => { println!("CPU_2 is not allowed to reset the system; Ignored"); },
-            //CPU_RUNNING | 
-            CPU_RUNNING => {
-                let mut pc = read(bin, CPU_2_PC);
-
-                let pc_restore = pc;
-                let a_addr = read(bin, pc +  0);
-                let b_addr = read(bin, pc +  8);
-                pc         = read(bin, pc + 16);
-
-                let a = read(bin, a_addr);
-                let b = read(bin, b_addr);
-
-                let s = b - a;
-                write(bin, s, b_addr);
-
-                // wait.. we didn't jump! go back to where we came from and go 24
-                if unsafe { unlikely(s > 0) } {
-                    pc = pc_restore + 24;
-                }
-                write(bin, pc, CPU_2_PC);
-
-                ins += 1;
-            },
-            _ => {}
+    });
+    thread::spawn(move || {
+        let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        loop {
+            match read_ptr(mem, CPU_2_FLAGS) { // CPU_1
+                CPU_NOT_PRESENT | // This is disabled, don't run
+                CPU_STOPPED => {}, // CPU is asleep, NOP
+                CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_2_FLAGS); },
+                CPU_SHUTDOWN => { println!("CPU_2 is not allowed to shutdown the system; Ignored"); },
+                CPU_RESET => { println!("CPU_2 is not allowed to reset the system; Ignored"); },
+                //CPU_RUNNING | 
+                CPU_RUNNING => {
+                    let mut pc = read_ptr(mem, CPU_2_PC);
+                    let pc_restore = pc;
+                    let a_addr = read_ptr(mem, pc +  0);
+                    let b_addr = read_ptr(mem, pc +  8);
+                    pc         = read_ptr(mem, pc + 16);
+                    let a = read_ptr(mem, a_addr);
+                    let b = read_ptr(mem, b_addr);
+                    let s = b - a;
+                    write_ptr(mem, s, b_addr);
+                    if unsafe { unlikely(s > 0) } {
+                        pc = pc_restore + 24;
+                    }
+                    write_ptr(mem, pc, CPU_2_PC);
+                },
+                _ => {}
+            }
         }
-
-        match read(bin, CPU_3_FLAGS) { // CPU_1
-            CPU_NOT_PRESENT | // This is disabled, don't run
-            CPU_STOPPED => {}, // CPU is asleep, NOP
-            CPU_STOP_REQUESTED => { write(bin, CPU_STOPPED, CPU_3_FLAGS); },
-            CPU_SHUTDOWN => { println!("CPU_3 is not allowed to shutdown the system; Ignored"); },
-            CPU_RESET => { println!("CPU_3 is not allowed to reset the system; Ignored"); },
-            //CPU_RUNNING | 
-            CPU_RUNNING => {
-                let mut pc = read(bin, CPU_3_PC);
-
-                let pc_restore = pc;
-                let a_addr = read(bin, pc +  0);
-                let b_addr = read(bin, pc +  8);
-                pc         = read(bin, pc + 16);
-
-                let a = read(bin, a_addr);
-                let b = read(bin, b_addr);
-
-                let s = b - a;
-                write(bin, s, b_addr);
-
-                // wait.. we didn't jump! go back to where we came from and go 24
-                if unsafe { unlikely(s > 0) } {
-                    pc = pc_restore + 24;
-                }
-                write(bin, pc, CPU_3_PC);
-
-                ins += 1;
-            },
-            _ => {}
+    });
+    thread::spawn(move || {
+        let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        loop {
+            match read_ptr(mem, CPU_3_FLAGS) { // CPU_1
+                CPU_NOT_PRESENT | // This is disabled, don't run
+                CPU_STOPPED => {}, // CPU is asleep, NOP
+                CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_3_FLAGS); },
+                CPU_SHUTDOWN => { println!("CPU_3 is not allowed to shutdown the system; Ignored"); },
+                CPU_RESET => { println!("CPU_3 is not allowed to reset the system; Ignored"); },
+                //CPU_RUNNING | 
+                CPU_RUNNING => {
+                    let mut pc = read_ptr(mem, CPU_3_PC);
+                    let pc_restore = pc;
+                    let a_addr = read_ptr(mem, pc +  0);
+                    let b_addr = read_ptr(mem, pc +  8);
+                    pc         = read_ptr(mem, pc + 16);
+                    let a = read_ptr(mem, a_addr);
+                    let b = read_ptr(mem, b_addr);
+                    let s = b - a;
+                    write_ptr(mem, s, b_addr);
+                    if unsafe { unlikely(s > 0) } {
+                        pc = pc_restore + 24;
+                    }
+                    write_ptr(mem, pc, CPU_3_PC);
+                },
+                _ => {}
+            }
         }
-
-        // write(bin, pc0, CPU_0_PC);
-        // write(bin, pc1, CPU_1_PC);
-        
-
-        /*
-
-        match read(bin, CPU_1_FLAGS) { // CPU_1
-            CPU_RUNNING => {
-                let mut pc = pc1;
-                let lpc = read(bin, CPU_1_PC);
-
-                if !ran_0 {
-                    println!("CPU_1 ran without CPU_0?");
-                }
-
-                if pc != lpc {
-                    println!("CPU_1 PC was off sync! PC: {:#X}, Mem: {:#X}", pc, lpc);
-                    pc = lpc;
-                }
-
-                let pc_restore = pc2;
-                let a_addr = read(bin, pc +  0);
-                let b_addr = read(bin, pc +  8);
-                pc         = read(bin, pc + 16);
-
-                let a = read(bin, a_addr);
-                let b = read(bin, b_addr);
-
-                let s = b - a;
-                write(bin, s, b_addr);        
-
-                // wait.. we didn't jump! go back to where we came from and go 24
-                if unsafe { unlikely(s > 0) } {
-                    pc = pc_restore + 24;
-                }
-
-                write(bin, pc, CPU_1_PC);
-                pc1 = pc;
-
-                ins += 1;
-            },
-            CPU_NOT_PRESENT |
-            CPU_STOPPED
-            => {},
-            CPU_STOP_REQUESTED => write(bin, CPU_STOPPED, CPU_1_FLAGS),
-            v => { println!("CPU_1 state: {}", v); } // Auxiliary cores don't care about shutdown or reset
-        }
-        */
-
-        // end of actual emulator
-        
+    });
+    
+    // program loop
+    'main: loop {
         iter += 1;
 
         #[cfg(not(feature = "sdl"))] {
@@ -393,10 +305,14 @@ fn main() {
             io::write_mouse(bin, pump.mouse_state(), w, h);
 
             let _  = canvas.window_mut()
-                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS, Ins/Clc: {:.3}", 
+                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS, CLCS: {:.2} Cores: {}{}{}{}", 
                 w, h, d, 
-                ins as f64 / time / 1_000_000.0,
-                ins as f64 / iter as f64,
+                1 as f64 / time / 1_000_000.0,
+                iter as f64 / time / 1_000_000.0,
+                if read(bin, CPU_0_FLAGS) == 1 {'R'} else {'S'},
+                if read(bin, CPU_1_FLAGS) == 1 {'R'} else {'S'},
+                if read(bin, CPU_2_FLAGS) == 1 {'R'} else {'S'},
+                if read(bin, CPU_3_FLAGS) == 1 {'R'} else {'S'},
             ));
 
             for event in pump.poll_iter() {
@@ -424,13 +340,14 @@ fn main() {
         e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
     };
 
-    //PROFILER.lock().unwrap().stop().expect("Can't stop profiler");
     println!();
+    //PROFILER.lock().unwrap().stop().expect("Can't stop profiler");
+    //println!("Nihongo-VM exited with code: {}", code);
     println!("Halted CPU_0, PC: {:#X}", read(bin, CPU_0_PC));
     println!("Halted CPU_1, PC: {:#X}", read(bin, CPU_1_PC));
     println!("Halted CPU_2, PC: {:#X}", read(bin, CPU_2_PC));
     println!("Halted CPU_3, PC: {:#X}", read(bin, CPU_3_PC));
-    println!("Runtime: {:.2}s, instructions: {} million, cycles {} million", finish, ins / 1_000_000, iter / 1_000_000);
+    println!("Runtime: {:.2}s, instructions: {} million, cycles {} million", finish, 1 / 1_000_000, iter / 1_000_000);
     println!("Average clcs: {:.2}", iter as f64 / finish / 1_000_000.0);
-    println!("Average MIPS: {:.2}", ins as f64 / finish / 1_000_000.0);
+    println!("Average MIPS: {:.2}", 1 as f64 / finish / 1_000_000.0);
 }

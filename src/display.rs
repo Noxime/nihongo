@@ -47,8 +47,5 @@ pub fn draw_screen(
 
     canvas.present();
     println!("Draw!");
-    if depth != 32 {
-        println!("Switching to 32bit colordepth, so we can enable direct write");
-    }
     (width, height, depth)
 }
