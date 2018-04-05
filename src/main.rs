@@ -20,9 +20,10 @@ use std::io::Read;
 use std::time::Instant;
 
 use std::thread;
-use std::sync::{Mutex, Arc};
+use std::sync::{Mutex, Arc, mpsc};
 
 use std::intrinsics::{bswap, likely, unlikely};
+use std::mem::transmute;
 
 mod constants;
 #[cfg(feature = "sdl")]
@@ -106,7 +107,6 @@ fn main() {
     #[cfg(feature = "sdl")] canvas.present();
     #[cfg(feature = "sdl")] let mut pump = context.event_pump().unwrap();
 
-    let mut iter = 0usize;
     let mut test = 0usize;
     let mut last_frame = 0i64;
 
@@ -120,7 +120,7 @@ fn main() {
     write(bin, 0, CPU_3_PC); // start 3
 
     // write cpu metadata
-    write(bin, 1, CPU_SPINUP_CYCLES); // since we are single threaded, our core spinup is instant
+    //write(bin, 1, CPU_SPINUP_CYCLES); // since we are single threaded, our core spinup is instant // EDIT: NVM
 
     {
         let mut cpu = CPU_STR.to_string();
@@ -141,19 +141,25 @@ fn main() {
             bin[CPU_VENDOR_INFO as usize + i] = b;
         }
     }
-    
 
-    println!("VM state initialized");
+    // notify main thread of thread events
+    let (tx, rx) = mpsc::channel();
+    let tx_0 = mpsc::Sender::clone(&tx);
+    let tx_1 = mpsc::Sender::clone(&tx);
+    let tx_2 = mpsc::Sender::clone(&tx);
+    let tx_3 = mpsc::Sender::clone(&tx);
     
+    // This allows us to circumvent Rust's FEARLESS CONCERRUNCY and replace it with our _spooky parallelism_
+    let mem_ptr: u64 = unsafe { transmute((&bin[..]).as_ptr()) };
+    
+    println!("VM state initialized");
     //PROFILER.lock().unwrap().start("./nihongo.profile").expect("Profile failed");
     let start = Instant::now();
 
-    use std::mem::transmute;
-    let mem_ptr: u64 = unsafe { transmute((&bin[..]).as_ptr()) };
-
     let t1 = thread::spawn(move || {
         let mem: *mut u8 = unsafe { transmute(mem_ptr) };
-        let mut ins = 0usize;
+        let mut ins = 0;
+        println!("CPU_0 thread launched");
         loop {
             match read_ptr(mem, CPU_0_FLAGS) { // CPU_1
                 //CPU_NOT_PRESENT | // This is disabled, don't run
@@ -162,8 +168,8 @@ fn main() {
                 CPU_SHUTDOWN => { println!("CPU_0 requested shutdown"); unimplemented!() },
                 CPU_RESET => { println!("CPU_0 requested hard reset"); unimplemented!() },
                 //CPU_RUNNING | 
-                CPU_RUNNING => {
-                    let mut pc = read_ptr(mem, CPU_3_PC);
+                _ => {
+                    let mut pc = read_ptr(mem, CPU_0_PC);
                     let pc_restore = pc;
                     let a_addr = read_ptr(mem, pc +  0);
                     let b_addr = read_ptr(mem, pc +  8);
@@ -175,8 +181,12 @@ fn main() {
                     if unsafe { unlikely(s > 0) } {
                         pc = pc_restore + 24;
                     }
-                    write_ptr(mem, pc, CPU_3_PC);
+                    write_ptr(mem, pc, CPU_0_PC);
                     ins += 1;
+                    if ins == INS_REPORT_RATE {
+                        tx_0.send(CODE_MIL_INS).unwrap();
+                        ins = 0;
+                    }
                 },
                 _ => {}
             }
@@ -184,10 +194,11 @@ fn main() {
     });
     thread::spawn(move || {
         let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        let mut ins = 0;
         loop {
             match read_ptr(mem, CPU_1_FLAGS) { // CPU_1
                 CPU_NOT_PRESENT | // This is disabled, don't run
-                CPU_STOPPED => {}, // CPU is asleep, NOP
+                CPU_STOPPED => { thread::sleep_ms(5); }, // CPU is asleep, NOP
                 CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_1_FLAGS); },
                 CPU_SHUTDOWN => { println!("CPU_1 is not allowed to shutdown the system; Ignored"); },
                 CPU_RESET => { println!("CPU_1 is not allowed to reset the system; Ignored"); },
@@ -206,6 +217,11 @@ fn main() {
                         pc = pc_restore + 24;
                     }
                     write_ptr(mem, pc, CPU_1_PC);
+                    ins += 1;
+                    if ins == INS_REPORT_RATE {
+                        tx_1.send(CODE_MIL_INS).unwrap();
+                        ins = 0;
+                    }
                 },
                 _ => {}
             }
@@ -213,10 +229,11 @@ fn main() {
     });
     thread::spawn(move || {
         let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        let mut ins = 0;
         loop {
             match read_ptr(mem, CPU_2_FLAGS) { // CPU_1
                 CPU_NOT_PRESENT | // This is disabled, don't run
-                CPU_STOPPED => {}, // CPU is asleep, NOP
+                CPU_STOPPED => { thread::sleep_ms(5); }, // CPU is asleep, NOP
                 CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_2_FLAGS); },
                 CPU_SHUTDOWN => { println!("CPU_2 is not allowed to shutdown the system; Ignored"); },
                 CPU_RESET => { println!("CPU_2 is not allowed to reset the system; Ignored"); },
@@ -235,6 +252,11 @@ fn main() {
                         pc = pc_restore + 24;
                     }
                     write_ptr(mem, pc, CPU_2_PC);
+                    ins += 1;
+                    if ins == INS_REPORT_RATE {
+                        tx_2.send(CODE_MIL_INS).unwrap();
+                        ins = 0;
+                    }
                 },
                 _ => {}
             }
@@ -242,10 +264,11 @@ fn main() {
     });
     thread::spawn(move || {
         let mem: *mut u8 = unsafe { transmute(mem_ptr) };
+        let mut ins = 0;
         loop {
             match read_ptr(mem, CPU_3_FLAGS) { // CPU_1
                 CPU_NOT_PRESENT | // This is disabled, don't run
-                CPU_STOPPED => {}, // CPU is asleep, NOP
+                CPU_STOPPED => { thread::sleep_ms(5); }, // CPU is asleep, NOP
                 CPU_STOP_REQUESTED => { write_ptr(mem, CPU_STOPPED, CPU_3_FLAGS); },
                 CPU_SHUTDOWN => { println!("CPU_3 is not allowed to shutdown the system; Ignored"); },
                 CPU_RESET => { println!("CPU_3 is not allowed to reset the system; Ignored"); },
@@ -264,15 +287,22 @@ fn main() {
                         pc = pc_restore + 24;
                     }
                     write_ptr(mem, pc, CPU_3_PC);
+                    ins += 1;
+                    if ins == INS_REPORT_RATE {
+                        tx_3.send(CODE_MIL_INS).unwrap();
+                        ins = 0;
+                    }
                 },
                 _ => {}
             }
         }
     });
     
+    let mut ins_count = 0usize;
+    let mut last_time = 0.0;
+    let mut peak_mips = 0.0;
     // program loop
     'main: loop {
-        iter += 1;
 
         #[cfg(not(feature = "sdl"))] {
             if unsafe { unlikely(iter % 32_000_000 == 0) } {
@@ -289,11 +319,12 @@ fn main() {
 
         #[cfg(feature = "sdl")]
         {
-        if unsafe { unlikely(iter % 4_000_000 == 0) } {
             let time = {
                 let e = start.elapsed();
                 e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
             };
+            let delta = time - last_time;
+            last_time = time;
 
             let (w, h, d) = display::draw_screen(
                 bin, 
@@ -302,13 +333,20 @@ fn main() {
                 &mut last_frame
             );
             
+            let last_ins_count = ins_count;
+            ins_count += rx.try_iter().fold(0, |s, v| if v == CODE_MIL_INS { s + 1 } else { s });
+            let mips = (ins_count - last_ins_count) as f64 / delta * INS_REPORT_RATE as f64 / 1_000_000.0;
+            if mips > peak_mips {
+                peak_mips = mips;
+            }
+
             io::write_mouse(bin, pump.mouse_state(), w, h);
 
             let _  = canvas.window_mut()
-                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS, CLCS: {:.2} Cores: {}{}{}{}", 
+                .set_title(&format!("Nihongo {}x{}x{} @ {:.2} MIPS (peak: {:.2}) Cores: {}{}{}{}", 
                 w, h, d, 
-                1 as f64 / time / 1_000_000.0,
-                iter as f64 / time / 1_000_000.0,
+                mips,
+                peak_mips,
                 if read(bin, CPU_0_FLAGS) == 1 {'R'} else {'S'},
                 if read(bin, CPU_1_FLAGS) == 1 {'R'} else {'S'},
                 if read(bin, CPU_2_FLAGS) == 1 {'R'} else {'S'},
@@ -324,15 +362,9 @@ fn main() {
                     _ => {}
                 }
             }
-
-            let time2 = {
-                let e = start.elapsed();
-                e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
-            };
-        }
         }
         
-
+        thread::sleep_ms(250);
     }
 
     let finish = {
@@ -347,7 +379,6 @@ fn main() {
     println!("Halted CPU_1, PC: {:#X}", read(bin, CPU_1_PC));
     println!("Halted CPU_2, PC: {:#X}", read(bin, CPU_2_PC));
     println!("Halted CPU_3, PC: {:#X}", read(bin, CPU_3_PC));
-    println!("Runtime: {:.2}s, instructions: {} million, cycles {} million", finish, 1 / 1_000_000, iter / 1_000_000);
-    println!("Average clcs: {:.2}", iter as f64 / finish / 1_000_000.0);
+    println!("Runtime: {:.2}s, instructions: {} million", finish, 1 / 1_000_000);
     println!("Average MIPS: {:.2}", 1 as f64 / finish / 1_000_000.0);
 }
