@@ -4,16 +4,13 @@ version = "0.0.0"
 
 [dependencies]
 argparse = "0.2.1"
-
-[dependencies.sdl2]
-optional = true
-version = "0.31.0"
+sdl2 = "0.31.0"
+lazy_static = "1.0.0"
 
 [dependencies.raw-cpuid]
 optional = true
 version = "3.0.0"
 
 [features]
-default = ["sdl", "detect_cpu"]
-sdl = ["sdl2"]
+default = ["detect_cpu"]
 detect_cpu = ["raw-cpuid"]

@@ -2,7 +2,8 @@
 pub const F2TO32: f64 = 4294967296.0;
 pub const CPU_STR: &str = "NihongoVM";
 pub const CODE_MIL_INS: usize = 1;
-pub const INS_REPORT_RATE: usize = 1_000_000;
+pub const CORE_CHECK_RATE: usize = 1_000;
+pub const CORE_SLEEP_TIME: u32 = 1;
 
 pub const DISPLAY_LOC: i64 = 1024 * 1024 * 256; // spec says "location 256 mbyte"
 pub const DISPLAY_DAT: i64 = 0x13FFEF80; // display data location
@@ -48,3 +49,6 @@ pub const CPU_SUSPEND_RAM: i64    = 32;
 pub const CPU_SPINUP_CYCLES: i64 = 0x13EDFFF8;
 pub const CPU_VENDOR_INFO: i64   = 0x13FE0028;
 // 40 byte ascii string containing CPU info
+
+pub const TIMER: i64 = 0x13FFFFF0;
+// NOTE: Unsigned
