@@ -111,14 +111,13 @@ fn main() {
         #[cfg(feature = "detect_cpu")]
         {
             let id = raw_cpuid::CpuId::new();
-            let v = format!("{}", id.get_vendor_info()
-                .map(|v| format!("{}", v))
-                .unwrap_or("[UNKNOWN]".to_string()));
-            let m = format!("{}", id.get_feature_info()
-                .map(|v| format!("{}-{}", v.family_id(), v.model_id()))
-                .unwrap_or("[UNKNOWN]".to_string()));
+            let brand = id.get_extended_function_info()
+                .map(|v| v.processor_brand_string()
+                    .map(|v| v.to_string())
+                    .unwrap_or("[Unknown]".to_string()))
+                .unwrap_or("[Unknown]".to_string());
 
-            cpu = format!("N-VM {} {}", v, m);
+            cpu = format!("N-VM {}", brand);
             println!("Detected CPU: {}", cpu);
         }
         if cpu.bytes().count() > 40 {
