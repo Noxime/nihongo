@@ -13,10 +13,52 @@ pub enum MousePress {
 
 lazy_static! {
     static ref MOUSE_QUEUE: Mutex<Vec<MousePress>> = Mutex::new(vec![]);
+    static ref KEY_QUEUE: Mutex<Vec<i64>> = Mutex::new(vec![]);
 }
 
 pub fn queue_mouse_press(which: MousePress) {
     MOUSE_QUEUE.lock().unwrap().push(which)
+}
+
+pub fn queue_key(c: i64) {
+    KEY_QUEUE.lock().unwrap().push(c);
+}
+
+// take a SDL keycode and translate it to Dawn keycodes
+pub fn queue_keycode(which: Keycode) {
+    let v = match which {
+        Keycode::LGui | Keycode::RGui => 1,
+        Keycode::Home => 2,
+        Keycode::End => 3,
+        //
+        Keycode::Backspace => 8,
+        Keycode::PageUp => 9,
+        Keycode::PageDown => 10,
+        //
+        Keycode::Return => 13,
+        Keycode::Up => 14,
+        Keycode::Left => 15,
+        Keycode::Down => 16,
+        Keycode::Right => 17,
+        //
+        Keycode::Escape => 27,
+        //
+        Keycode::PrintScreen => 192,
+        //
+        _ => return
+    };
+    queue_key(v);
+}
+
+pub fn work_key_queue(mem: &mut Vec<u8>) {
+    let key = {
+        let mut queue = KEY_QUEUE.lock().unwrap();
+        if queue.len() == 0 { return; }
+        let x = queue[0];
+        queue.remove(0);
+        x
+    };
+    write(mem, key as i64, IO_KEYBOARD);
 }
 
 pub fn work_mouse_queue(mem: &mut Vec<u8>) {

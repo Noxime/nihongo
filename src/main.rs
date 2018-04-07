@@ -79,7 +79,7 @@ fn main() {
         let mut ap = ArgumentParser::new();
         ap.set_description("Nihongo-VM is a DawnOS compatible SUBLEQ emulator.");
         ap.refer(&mut filename)
-            .add_option(&["-f", "--file"], Store, "Binary file to load (default 'disk0.bin'");
+            .add_option(&["-f", "--file"], Store, "Binary file to load (default 'disk0.bin')");
         ap.refer(&mut option_cores)
             .add_option(&["-c", "--cores"], Store, "How many cores to run (default 4)");
         ap.parse_args_or_exit();
@@ -105,10 +105,6 @@ fn main() {
     let mut pump = context.event_pump().unwrap();
 
     write(bin, CPU_RUNNING, CPU_0_FLAGS); // Cpu 0 starts off running
-    write(bin, 0, CPU_0_PC); // start 0
-    write(bin, 0, CPU_1_PC); // start 1
-    write(bin, 0, CPU_2_PC); // start 2
-    write(bin, 0, CPU_3_PC); // start 3
 
     {
         let mut cpu = CPU_STR.to_string();
@@ -153,7 +149,7 @@ fn main() {
             let mut ins = 0;
             let mut pc = read_ptr(mem, CPU_0_PC + offset);
             let mut state = read_ptr(mem, CPU_0_FLAGS + offset);
-            println!("CPU_{} thread launched", i + 1);
+            println!("CPU_{} thread launched", i);
             loop {
                 // check for state changes, aka if we should launch our CPU or
                 // something
@@ -243,6 +239,14 @@ fn main() {
                 Event::MouseButtonUp { which, .. } => {
                     io::queue_mouse_press(io::MousePress::Up(which as i64));
                 },
+                Event::TextInput { text, .. } => {
+                    for ch in text.chars() {
+                        io::queue_key(ch as i64);
+                    }
+                },
+                Event::KeyDown { keycode: Some(v), .. } => {
+                    io::queue_keycode(v);
+                },
                 Event::Window { .. } => {},
                 v => { println!("Event: {:#?}", v)}
             }
@@ -250,8 +254,9 @@ fn main() {
 
         display::refresh(bin, &mut tex, &mut canvas);
         io::work_mouse_queue(bin);
+        io::work_key_queue(bin);
 
-        // we want to update our timer every 2ms
+        // updating more often is unnecessary
         thread::sleep_ms(2);
     }
 
@@ -263,10 +268,6 @@ fn main() {
     println!();
     //PROFILER.lock().unwrap().stop().expect("Can't stop profiler");
     //println!("Nihongo-VM exited with code: {}", code);
-    println!("Halted CPU_0, PC: {:#X}", read(bin, CPU_0_PC));
-    println!("Halted CPU_1, PC: {:#X}", read(bin, CPU_1_PC));
-    println!("Halted CPU_2, PC: {:#X}", read(bin, CPU_2_PC));
-    println!("Halted CPU_3, PC: {:#X}", read(bin, CPU_3_PC));
-    println!("Runtime: {:.2}s, instructions: {} million", finish, 1 / 1_000_000);
+    println!("Runtime: {:.2}s", finish);
     println!("Average MIPS: {:.2}", 1 as f64 / finish / 1_000_000.0);
 }

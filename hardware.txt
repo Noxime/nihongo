@@ -1,4 +1,4 @@
-Dawn hardware platform overview
+öDawn hardware platform overview
 
 
 The goal of this platform was to offer a system that is simple enough to be manufactured by any corporation or
