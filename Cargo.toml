@@ -10,7 +10,7 @@ time = "0.1.39"
 
 [dependencies.raw-cpuid]
 optional = true
-version = "3.0.0"
+git = "https://github.com/gz/rust-cpuid"
 
 [features]
 default = ["detect_cpu"]
