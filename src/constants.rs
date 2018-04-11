@@ -55,3 +55,19 @@ pub const CPU_VENDOR_INFO: i64   = 0x13FE0028;
 
 pub const TIMER: i64 = 0x13FFFFF0;
 // NOTE: Unsigned
+
+pub const DISK: i64 = 0x13EDF360;
+pub const DISK_DATA_OFFSET: i64 = 0;
+pub const DISK_ADDR_OFFSET: i64 = 8;
+pub const DISK_CMND_OFFSET: i64 = 16;
+pub const DISK_STRIDE: i64 = 24;
+// max 100 disk devices
+// 8 bytes data, only lowest byte functional
+// 8 bytes disk address
+// 8 bytes command (0 not present 1 initial value 2 read disk 4 write disk 3 finished reading 5 finished writing)
+pub const DISK_NO: i64 = 0;
+pub const DISK_INIT: i64 = 1;
+pub const DISK_READ: i64 = 2;
+pub const DISK_WRITE: i64 = 4;
+pub const DISK_READ_DONE: i64 = 3;
+pub const DISK_WRITE_DONE: i64 = 5;

@@ -104,6 +104,8 @@ fn main() {
     canvas.present();
     let mut pump = context.event_pump().unwrap();
 
+    io::init_disks(bin, vec!["aux_disk_0.bin".into()]);
+
     write(bin, CPU_RUNNING, CPU_0_FLAGS); // Cpu 0 starts off running
 
     {
@@ -246,7 +248,8 @@ fn main() {
                 Event::KeyDown { keycode: Some(v), .. } => {
                     io::queue_keycode(v);
                 },
-                Event::Window { .. } => {},
+                Event::Window { .. } | 
+                Event::Unknown { .. } => {},
                 v => { println!("Event: {:#?}", v)}
             }
         }
@@ -254,6 +257,7 @@ fn main() {
         display::refresh(bin, &mut tex, &mut canvas);
         io::work_mouse_queue(bin);
         io::work_key_queue(bin);
+        io::work_disk(bin);
 
         // updating more often is unnecessary
         thread::sleep_ms(2);
@@ -263,6 +267,8 @@ fn main() {
         let e = start.elapsed();
         e.as_secs() as f64 + e.subsec_nanos() as f64 / 1_000_000_000.0
     };
+
+    io::save_disks();
 
     println!();
     //PROFILER.lock().unwrap().stop().expect("Can't stop profiler");

@@ -5,6 +5,9 @@ use *;
 
 use std::sync::Mutex;
 
+use std::fs::File;
+use std::io::Write;
+
 #[derive(Clone, Copy)]
 pub enum MousePress {
     Up(i64),
@@ -14,6 +17,7 @@ pub enum MousePress {
 lazy_static! {
     static ref MOUSE_QUEUE: Mutex<Vec<MousePress>> = Mutex::new(vec![]);
     static ref KEY_QUEUE: Mutex<Vec<i64>> = Mutex::new(vec![]);
+    static ref DISKS: Mutex<Vec<(File, Vec<u8>)>> = Mutex::new(vec![]);
 }
 
 pub fn queue_mouse_press(which: MousePress) {
@@ -93,4 +97,54 @@ pub fn write_mouse(mem: &mut Vec<u8>, mouse: MouseState, width: usize, height: u
     // println!("[{}, {}]", mouse.x() as f64 / width as f64, mouse.y() as f64 / height as f64);
     write(mem, (mouse.x() as f64 / width as f64 * F2TO32) as i64, IO_MOUSE + 48);
     write(mem, (mouse.y() as f64 / height as f64 * F2TO32) as i64, IO_MOUSE + 56);
+}
+
+pub fn init_disks(mem: &mut Vec<u8>, files: Vec<String>) -> Result<(), ()> {
+    let mut disks = DISKS.lock().unwrap();
+    for (i, filename) in files.iter().enumerate() {
+        println!("Opening disk image: `{}`", filename);
+        let mut f = File::open(filename).unwrap();
+        let mut bin = vec![];
+        f.read_to_end(&mut bin);
+        disks.push((f, bin));
+        write(mem, DISK_INIT, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
+    }
+    println!("Opened {} disks: {:#?}", disks.len(), disks);
+    Ok(())
+}
+
+pub fn work_disk(mem: &mut Vec<u8>) {
+    let mut disks = DISKS.lock().unwrap();
+    for (i, (_, ref mut buf)) in disks.iter().enumerate() {
+        let state = read(mem, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
+        match state {
+            DISK_READ => {
+                let addr = read(mem, DISK + DISK_ADDR_OFFSET + i as i64 * DISK_STRIDE);
+                if let Some(value) = buf.get(addr as usize) {
+                    mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize] = *value;
+                } else {
+                    mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize] = 0xFF // Read error, not in range
+                }
+                write(mem, DISK_READ_DONE, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
+            },
+            DISK_WRITE => {
+                let addr = read(mem, DISK + DISK_ADDR_OFFSET + i as i64 * DISK_STRIDE);
+                if let Some(_) = buf.get(addr as usize) {
+                    buf[addr as usize] = mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize];
+                }
+                write(mem, DISK_WRITE_DONE, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
+            },
+            _ => ()
+        }
+    }
+}
+
+pub fn save_disks() {
+    println!("Saving disks");
+    let mut disks = DISKS.lock().unwrap();
+    for (ref mut file, buf) in disks.iter_mut() {
+        file.write_all(&buf[..]);
+        file.flush();
+    }
+    println!("Disk dump done");
 }
