@@ -104,7 +104,7 @@ fn main() {
     canvas.present();
     let mut pump = context.event_pump().unwrap();
 
-    io::init_disks(bin, vec!["aux_disk_0.bin".into()]);
+    io::init_disks(bin, vec!["aux_disk_0.bin".into(), "aux_disk_1.bin".into()]);
 
     write(bin, CPU_RUNNING, CPU_0_FLAGS); // Cpu 0 starts off running
 

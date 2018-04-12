@@ -5,7 +5,7 @@ use *;
 
 use std::sync::Mutex;
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 
 #[derive(Clone, Copy)]
@@ -103,9 +103,13 @@ pub fn init_disks(mem: &mut Vec<u8>, files: Vec<String>) -> Result<(), ()> {
     let mut disks = DISKS.lock().unwrap();
     for (i, filename) in files.iter().enumerate() {
         println!("Opening disk image: `{}`", filename);
-        let mut f = File::open(filename).unwrap();
+        let mut f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(filename).unwrap();
         let mut bin = vec![];
-        f.read_to_end(&mut bin);
+        f.read_to_end(&mut bin).expect("File read failed");
+        println!("Read {} bytes of disk {}", bin.len(), filename);
         disks.push((f, bin));
         write(mem, DISK_INIT, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
     }
@@ -116,21 +120,29 @@ pub fn init_disks(mem: &mut Vec<u8>, files: Vec<String>) -> Result<(), ()> {
 pub fn work_disk(mem: &mut Vec<u8>) {
     let mut disks = DISKS.lock().unwrap();
     for (i, (_, ref mut buf)) in disks.iter().enumerate() {
+        //buf[0] = 0xD0;
         let state = read(mem, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
         match state {
             DISK_READ => {
-                let addr = read(mem, DISK + DISK_ADDR_OFFSET + i as i64 * DISK_STRIDE);
+                let addr = read(mem, DISK + DISK_ADDR_OFFSET + i as i64 * DISK_STRIDE) & 0xFFF;
                 if let Some(value) = buf.get(addr as usize) {
                     mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize] = *value;
+                    println!("Read {:#X} from {:#X} (disk {})", *value, addr, i);
                 } else {
-                    mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize] = 0xFF // Read error, not in range
+                    mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize] = 0xFF; // Read error, not in range
+                    println!("Out of bounds read! ({:#X}, disk size is {:#X}) (disk {})", addr, buf.len(), i);
                 }
                 write(mem, DISK_READ_DONE, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
             },
             DISK_WRITE => {
-                let addr = read(mem, DISK + DISK_ADDR_OFFSET + i as i64 * DISK_STRIDE);
+                let addr = read(mem, DISK + DISK_ADDR_OFFSET + i as i64 * DISK_STRIDE) & 0xFFF;
                 if let Some(_) = buf.get(addr as usize) {
                     buf[addr as usize] = mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize];
+                    println!("Wrote {:#X} to {:#X} (disk {})", mem[(DISK + DISK_DATA_OFFSET + i as i64 * DISK_STRIDE) as usize], addr, i);
+                    println!("MEM DUMP");
+                    println!("{:?}", &mem[DISK as usize .. DISK as usize + 24]);
+                } else {
+                    println!("Out of bounds write! ({:#X}, disk size is {:#X}) (disk {})", addr, buf.len(), i);
                 }
                 write(mem, DISK_WRITE_DONE, DISK + DISK_CMND_OFFSET + i as i64 * DISK_STRIDE);
             },
@@ -143,8 +155,8 @@ pub fn save_disks() {
     println!("Saving disks");
     let mut disks = DISKS.lock().unwrap();
     for (ref mut file, buf) in disks.iter_mut() {
-        file.write_all(&buf[..]);
-        file.flush();
+        file.write_all(&buf[..]).expect("Disk write failed");
+        file.flush().expect("Flush failed");
     }
     println!("Disk dump done");
 }
