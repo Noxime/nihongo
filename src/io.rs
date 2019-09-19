@@ -118,6 +118,7 @@ pub fn init_disks(mem: &mut Vec<u8>, files: Vec<String>) -> Result<(), ()> {
 }
 
 pub fn work_disk(mem: &mut Vec<u8>) {
+    /*
     let mut disks = DISKS.lock().unwrap();
     for (i, (_, ref mut buf)) in disks.iter().enumerate() {
         //buf[0] = 0xD0;
@@ -149,6 +150,7 @@ pub fn work_disk(mem: &mut Vec<u8>) {
             _ => ()
         }
     }
+    */
 }
 
 pub fn save_disks() {
